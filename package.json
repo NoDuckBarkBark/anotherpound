@@ -1,10 +1,10 @@
 {
   "name": "anotherpound",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.7.0",
   "type": "module",
   "license": "MIT",
-  "description": "Calorie and macro tracker. No account, no ads, no server. All data stays on the device.",
+  "description": "Calorie and macro tracker. Web app (PWA), works offline.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

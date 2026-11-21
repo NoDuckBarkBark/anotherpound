@@ -6,6 +6,7 @@
   import { backupDue } from './lib/storage';
   import { t } from './lib/texts';
   import Toast from './lib/Toast.svelte';
+  import Welcome from './lib/Welcome.svelte';
   import Add from './views/Add.svelte';
   import Dishes from './views/Dishes.svelte';
   import DishForm from './views/DishForm.svelte';
@@ -56,6 +57,7 @@
 </main>
 
 <Toast />
+<Welcome />
 
 <!-- While the keyboard is open the bar steps aside: the space belongs to the field being typed in. -->
 <nav class="tabs" class:away={keyboard.open} aria-label={t.nav.label}>

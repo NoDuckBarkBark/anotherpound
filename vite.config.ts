@@ -35,8 +35,10 @@ export default defineConfig({
         ],
       },
       workbox: {
-        // Precache everything, food data and barcode detection included: the app starts and searches offline.
+        // Precache everything, basic foods and barcode detection included: the app starts and searches offline.
+        // The products of the chosen country are kept by the app itself (src/lib/catalog.ts).
         globPatterns: ['**/*.{js,css,html,svg,png,json,wasm}'],
+        globIgnores: ['data/off/**'],
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
         cleanupOutdatedCaches: true,
         clientsClaim: true,

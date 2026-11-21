@@ -1,6 +1,7 @@
 import type { Food, Nutrients, Unit } from './db';
 import { normalizeBarcode } from './ean';
 import { language } from './locale';
+import { regionTag } from './regions';
 
 /**
  * Open Food Facts: lookup of single products by barcode and name search on button press.
@@ -145,12 +146,10 @@ export async function searchProducts(query: string, fetcher: typeof fetch = fetc
     lc: language,
     fields: FIELDS,
   });
-  // German interface: products sold in Germany. English interface: no country filter.
-  if (language === 'de') {
-    params.set('tagtype_0', 'countries');
-    params.set('tag_contains_0', 'contains');
-    params.set('tag_0', 'germany');
-  }
+  // Only products sold in the chosen country.
+  params.set('tagtype_0', 'countries');
+  params.set('tag_contains_0', 'contains');
+  params.set('tag_0', regionTag);
   try {
     const response = await fetcher(`${HOST}/cgi/search.pl?${params}`);
     if (!response.ok) return { status: 'offline' };

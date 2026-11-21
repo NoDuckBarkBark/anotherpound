@@ -12,8 +12,9 @@
   import { goalFor } from '../lib/goals';
   import { live } from '../lib/live.svelte';
   import { mealNames as namesOf, renamedMeals } from '../lib/meals';
-  import { chosenLanguage, LANGUAGES, setLanguage } from '../lib/locale';
+  import LanguageCountry from '../lib/LanguageCountry.svelte';
   import { applyUpdate, install, pwa } from '../lib/pwa.svelte';
+  import { region, setRegion } from '../lib/regions';
   import { scannerEngine, type Engine } from '../lib/scanner';
   import { backupDue, keepStorage } from '../lib/storage';
   import { useGoals, useMealNames } from '../lib/stores.svelte';
@@ -23,7 +24,7 @@
   const goals = useGoals();
   const goal = $derived(goalFor(todayKey(), goals.value));
   const mealNames = useMealNames();
-  const chosen = chosenLanguage();
+  let country = $state(region);
 
   const lastBackup = live(
     () => 0,
@@ -113,22 +114,8 @@
 
 <section class="card">
   <h2>{t.more.language}</h2>
-  <div class="chips names" role="radiogroup" aria-label={t.more.language}>
-    <button type="button" class="chip" role="radio" aria-checked={chosen === null} onclick={() => setLanguage(null)}>
-      {t.more.languageDevice}
-    </button>
-    {#each LANGUAGES as option (option.id)}
-      <button
-        type="button"
-        class="chip"
-        role="radio"
-        lang={option.id}
-        aria-checked={chosen === option.id}
-        onclick={() => setLanguage(option.id)}
-      >
-        {option.name}
-      </button>
-    {/each}
+  <div class="names">
+    <LanguageCountry bind:country onchange={setRegion} />
   </div>
 </section>
 

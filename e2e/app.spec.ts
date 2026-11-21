@@ -33,10 +33,18 @@ test.afterEach(() => {
   expect(pageErrors).toEqual([]);
 });
 
-/** Replaces the built-in catalog with small fixed files; Open Food Facts answers "not found" by default. */
-async function setup(page: Page) {
+/** Country already chosen, so the question at the first start does not come up. */
+async function chooseCountry(page: Page, code = 'GB') {
+  await page.addInitScript((value) => {
+    if (!localStorage.getItem('anotherpound:region')) localStorage.setItem('anotherpound:region', value);
+  }, code);
+}
+
+/** Replaces the catalog with small fixed files; Open Food Facts answers "not found" by default. */
+async function setup(page: Page, { firstStart = false } = {}) {
+  if (!firstStart) await chooseCountry(page);
   await page.route('**/data/bls.json', (route) => route.fulfill({ json: BLS }));
-  await page.route('**/data/off-starter.json', (route) => route.fulfill({ json: OFF_STARTER }));
+  await page.route(/\/data\/off\/\w+\.json/, (route) => route.fulfill({ json: OFF_STARTER }));
   await page.route('https://world.openfoodfacts.org/**', (route) =>
     route.fulfill({ status: 404, headers: cors, json: { status: 'failure' } }),
   );
@@ -755,6 +763,76 @@ test('webhook: a target that does not admit browsers gets the plain request; wit
   await expect(page.getByRole('textbox', { name: 'URL' })).toHaveValue(HOOK);
   await expect(page.getByLabel('Value', { exact: true })).toHaveCSS('-webkit-text-security', 'disc');
   await expect(page.getByLabel('Value', { exact: true })).toHaveValue('Bearer abc');
+});
+
+test.describe('first start', () => {
+  test('asks for language and country, prefilled from the device, and only once', async ({ page }) => {
+    const packs: string[] = [];
+    page.on('request', (request) => {
+      const file = /data\/off\/(\w+)\.json/.exec(request.url())?.[1];
+      if (file) packs.push(file);
+    });
+    await setup(page, { firstStart: true });
+
+    const welcome = page.getByRole('dialog', { name: 'AnotherPound' });
+    await expect(welcome.getByRole('radio', { name: 'Device' })).toHaveAttribute('aria-checked', 'true');
+    await expect(welcome.getByRole('combobox', { name: 'Country' })).toHaveValue('GB');
+    await welcome.getByRole('button', { name: 'Start' }).click();
+    await expect(welcome).toBeHidden();
+    expect(await page.evaluate(() => localStorage.getItem('anotherpound:region'))).toBe('GB');
+
+    await page.reload();
+    await expect(page.getByRole('navigation').getByRole('link', { name: 'Today' })).toBeVisible();
+    await expect(welcome).toBeHidden();
+    await expect.poll(() => packs).toContain('gb');
+    expect(new Set(packs)).toEqual(new Set(['gb']));
+  });
+
+  test('another country restarts the app with the products of that country', async ({ page }) => {
+    const packs: string[] = [];
+    let searched = '';
+    page.on('request', (request) => {
+      const file = /data\/off\/(\w+)\.json/.exec(request.url())?.[1];
+      if (file) packs.push(file);
+      if (request.url().includes('/cgi/search.pl')) searched = request.url();
+    });
+    await setup(page, { firstStart: true });
+
+    const welcome = page.getByRole('dialog', { name: 'AnotherPound' });
+    await welcome.getByRole('combobox', { name: 'Country' }).selectOption({ label: 'France' });
+    await welcome.getByRole('button', { name: 'Start' }).click();
+    await expect.poll(() => packs).toContain('fr');
+    await expect(welcome).toBeHidden();
+
+    // The search at Open Food Facts is limited to the country.
+    await openAdd(page, 'Breakfast');
+    await search(page).fill('camembert');
+    await page.getByRole('button', { name: 'Search Open Food Facts' }).click();
+    await expect.poll(() => searched).toContain('tag_0=france');
+
+    // The country can be changed under "More".
+    await page.getByRole('link', { name: 'Back' }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'More' }).click();
+    const country = page.getByRole('combobox', { name: 'Country' });
+    await expect(country).toHaveValue('FR');
+    await country.selectOption({ label: 'Austria' });
+    await expect.poll(() => packs).toContain('at');
+    await expect(page.getByRole('combobox', { name: 'Country' })).toHaveValue('AT');
+  });
+
+  test.describe('German device', () => {
+    test.use({ locale: 'de-DE' });
+
+    test('is asked in German with Germany preselected', async ({ page }) => {
+      await setup(page, { firstStart: true });
+      const welcome = page.getByRole('dialog', { name: 'AnotherPound' });
+      await expect(welcome.getByRole('combobox', { name: 'Land' })).toHaveValue('DE');
+      await expect(welcome.getByRole('combobox', { name: 'Land' }).locator('option:checked')).toHaveText('Deutschland');
+      await welcome.getByRole('button', { name: 'Los' }).click();
+      await expect(welcome).toBeHidden();
+      await expect(page.getByRole('navigation').getByRole('link', { name: 'Heute' })).toBeVisible();
+    });
+  });
 });
 
 test.describe('language', () => {

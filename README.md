@@ -5,6 +5,7 @@ Calorie and macro tracker. A web app (PWA) that can be installed and works offli
 App: https://noduckbarkbark.github.io/anotherpound/
 
 - Food diary with search and barcode scanner
+- Basic foods in English and German, products for 30 European countries
 - Dishes and templates
 - Goals, weight, history
 - Backup file, outgoing webhook

@@ -66,6 +66,7 @@ export const de: Texts = {
     newPortion: 'Portion hinzufügen',
   },
   pad: { label: 'Zahlenfeld', back: 'Ziffer entfernen' },
+  welcome: { start: 'Los' },
   toast: {
     deleted: (name: string) => `${name} gelöscht`,
     entries: (count: number) => (count === 1 ? '1 Eintrag' : `${count} Einträge`),
@@ -154,6 +155,7 @@ export const de: Texts = {
     install: 'Installieren',
     update: 'Aktualisieren',
     language: 'Sprache',
+    country: 'Land',
     languageDevice: 'Gerät',
     storage: { yes: 'Speicher dauerhaft', no: 'Speicher nicht dauerhaft' },
     scanner: { native: 'Scanner eingebaut', wasm: 'Scanner zxing' },

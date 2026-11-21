@@ -45,7 +45,7 @@ USER_AGENT = "AnotherPound-build/0.1"
 ZIP_NAME = "BLS_4_0_2025_DE.zip"
 DATA_SUFFIX = "_Daten_2025_DE.xlsx"
 
-FIELDS = ["id", "name", "kcal", "protein", "carbs", "sugar", "fat", "satFat", "fiber", "salt", "alcohol"]
+FIELDS = ["id", "name", "nameEn", "kcal", "protein", "carbs", "sugar", "fat", "satFat", "fiber", "salt", "alcohol"]
 
 # field -> (component code in the BLS, expected unit, decimal places)
 COMPONENTS = {
@@ -181,11 +181,11 @@ def build_rows(workbook_bytes: bytes) -> tuple[list[list], dict]:
     header = next(rows_iter)
 
     labels = [str(c or "").strip() for c in header[:3]]
-    if labels[0] != "BLS Code" or labels[1] != "Lebensmittelbezeichnung":
+    if labels[0] != "BLS Code" or labels[1] != "Lebensmittelbezeichnung" or labels[2] != "Food name":
         raise SystemExit(f"Unexpected header row: {labels}")
 
     columns = locate_columns(header)
-    used: dict[str, str] = {"id": labels[0], "name": labels[1]}
+    used: dict[str, str] = {"id": labels[0], "name": labels[1], "nameEn": labels[2]}
     index_of: dict[str, int] = {}
     for field, (code, unit, _digits) in COMPONENTS.items():
         if code not in columns:
@@ -220,6 +220,8 @@ def build_rows(workbook_bytes: bytes) -> tuple[list[list], dict]:
         total += 1
         code = str(raw[0] or "").strip()
         name = " ".join(str(raw[1] or "").split())
+        # The English name from the same row; without one, the German name stands in.
+        name_en = " ".join(str(raw[2] or "").split()) or name
         if not code or not name:
             dropped["without code or name"] += 1
             continue
@@ -246,8 +248,8 @@ def build_rows(workbook_bytes: bytes) -> tuple[list[list], dict]:
             dropped["without " + "/".join(missing)] += 1
             continue
 
-        row: list = [code, name]
-        for field in FIELDS[2:]:
+        row: list = [code, name, name_en]
+        for field in FIELDS[3:]:
             value = values.get(field)
             if value is None:
                 nulls[field] += 1

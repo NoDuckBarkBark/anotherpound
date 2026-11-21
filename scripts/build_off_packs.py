@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Builds public/data/off-starter.json: the most scanned products from Germany.
+"""Builds public/data/off/<country>.json: the most scanned products of each country.
 
 Source: Open Food Facts (https://openfoodfacts.org), Open Database License (ODbL).
 It reads the Parquet dump of the product database on Hugging Face
 (openfoodfacts/product-database, file food.parquet, about 8 GB). Only this dump
-contains the German product name in addition to the main name.
+contains the product names in every language.
 
 Usage (from the project folder):
 
-    python -I scripts/build_off_starter.py
+    python -I scripts/build_off_packs.py            # all countries
+    python -I scripts/build_off_packs.py DE AT CH   # only these
 
 The dump goes to .cache/off/food.parquet and is reused on the next run
 (--refresh downloads it again).
@@ -33,11 +34,45 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_PARQUET = ROOT / ".cache" / "off" / "food.parquet"
-DEFAULT_OUT = ROOT / "public" / "data" / "off-starter.json"
+DEFAULT_OUT = ROOT / "public" / "data" / "off"
 
 PARQUET_URL = "https://huggingface.co/datasets/openfoodfacts/product-database/resolve/main/food.parquet"
 USER_AGENT = "AnotherPound-build/0.1"
-COUNTRY_TAG = "en:germany"
+
+# Country code -> (country tag in Open Food Facts, code in the scan tags, languages of the product
+# names in order of preference). The same codes are listed in src/lib/regions.ts.
+COUNTRIES: dict[str, tuple[str, str, tuple[str, ...]]] = {
+    "AT": ("en:austria", "at", ("de",)),
+    "BE": ("en:belgium", "be", ("nl", "fr")),
+    "BG": ("en:bulgaria", "bg", ("bg",)),
+    "CH": ("en:switzerland", "ch", ("de", "fr", "it")),
+    "CY": ("en:cyprus", "cy", ("el",)),
+    "CZ": ("en:czech-republic", "cz", ("cs",)),
+    "DE": ("en:germany", "de", ("de",)),
+    "DK": ("en:denmark", "dk", ("da",)),
+    "EE": ("en:estonia", "ee", ("et",)),
+    "ES": ("en:spain", "es", ("es",)),
+    "FI": ("en:finland", "fi", ("fi",)),
+    "FR": ("en:france", "fr", ("fr",)),
+    "GB": ("en:united-kingdom", "gb", ("en",)),
+    "GR": ("en:greece", "gr", ("el",)),
+    "HR": ("en:croatia", "hr", ("hr",)),
+    "HU": ("en:hungary", "hu", ("hu",)),
+    "IE": ("en:ireland", "ie", ("en",)),
+    "IT": ("en:italy", "it", ("it",)),
+    "LT": ("en:lithuania", "lt", ("lt",)),
+    "LU": ("en:luxembourg", "lu", ("fr", "de")),
+    "LV": ("en:latvia", "lv", ("lv",)),
+    "MT": ("en:malta", "mt", ("en",)),
+    "NL": ("en:netherlands", "nl", ("nl",)),
+    "NO": ("en:norway", "no", ("nb", "no")),
+    "PL": ("en:poland", "pl", ("pl",)),
+    "PT": ("en:portugal", "pt", ("pt",)),
+    "RO": ("en:romania", "ro", ("ro",)),
+    "SE": ("en:sweden", "se", ("sv",)),
+    "SI": ("en:slovenia", "si", ("sl",)),
+    "SK": ("en:slovakia", "sk", ("sk",)),
+}
 
 FIELDS = [
     "code", "name", "brand", "quantity", "unit",
@@ -101,64 +136,70 @@ def download_parquet(target: Path) -> None:
 
 # ---------------------------------------------------------------- Query
 
-def query_candidates(parquet: Path, rank: str):
-    """All products with country Germany and scans, ordered by popularity."""
+def load_source(parquet: Path, codes: list[str]):
+    """One pass over the dump: every scanned product sold in one of the countries."""
     import duckdb
 
     con = duckdb.connect()
-    con.execute(
-        """
-        CREATE TEMP TABLE src AS
-        SELECT code, product_name, brands, quantity, serving_size, serving_quantity,
-               unique_scans_n, scans_n, popularity_tags, nutriments
-        FROM read_parquet(?)
-        WHERE list_contains(countries_tags, ?) AND unique_scans_n > 0
-        """,
-        [str(parquet), COUNTRY_TAG],
-    )
-
-    # unique_scans_n counts scans worldwide. How often a product was scanned in Germany
-    # is only given in tiers in the tags ("top-5000-de-scans-2026", latest year).
-    # --rank scans: unique_scans_n, ties broken by the German tier.
-    # --rank de:    German tier first, then unique_scans_n.
-    # After that, scans_n and the code in each case, so the order is unambiguous.
-    tier_re = r"^top-(\d+)-de-scans-(\d{4})$"
-    year = con.execute(
-        "SELECT max(CAST(regexp_extract(t, ?, 2) AS INTEGER)) "
-        "FROM (SELECT unnest(popularity_tags) AS t FROM src) WHERE regexp_matches(t, ?)",
-        [tier_re, tier_re],
-    ).fetchone()[0]
-    year_re = rf"^top-(\d+)-de-scans-{year}$" if year else r"^$"
-
-    order_sql = {
-        "scans": "unique_scans_n DESC, de_tier ASC NULLS LAST",
-        "de": "de_tier ASC NULLS LAST, unique_scans_n DESC",
-    }[rank]
+    tags = [COUNTRIES[code][0] for code in codes]
     nutrient_sql = ",\n               ".join(
         f"""CAST([x."100g" for x in nutriments if x.name = '{off_name}'][1] AS VARCHAR) AS "{column}\""""
         for column, off_name in NUTRIENTS.items()
     )
     # CAST(... AS VARCHAR) gives the shortest notation of the 32-bit number ("0.45" instead of 0.449999988).
+    con.execute(
+        f"""
+        CREATE TEMP TABLE src AS
+        SELECT code, product_name, brands, quantity, serving_size, serving_quantity,
+               unique_scans_n, scans_n, popularity_tags, countries_tags,
+               {nutrient_sql}
+        FROM read_parquet(?)
+        WHERE list_has_any(countries_tags, ?) AND unique_scans_n > 0
+        """,
+        [str(parquet), tags],
+    )
+    return con
+
+
+def query_candidates(con, code: str, year: int):
+    """All scanned products of one country, ordered by popularity there."""
+    tag, scan_code, _languages = COUNTRIES[code]
+    # unique_scans_n counts scans worldwide. How often a product was scanned in a country
+    # is only given in tiers in the tags ("top-5000-de-scans-2025"). The order is the tier of
+    # the country first, then unique_scans_n, then scans_n and the code, so it is unambiguous.
+    tier_re = rf"^top-(\d+)-{scan_code}-scans-{year}$"
     cursor = con.execute(
         f"""
-        SELECT code,
-               [x.text for x in product_name if x.lang = 'de' AND trim(x.text) <> ''][1] AS name_de,
-               [x.text for x in product_name if x.lang = 'main' AND trim(x.text) <> ''][1] AS name_main,
-               [x.text for x in product_name if x.lang = 'en' AND trim(x.text) <> ''][1] AS name_en,
-               [x.text for x in product_name if trim(x.text) <> ''][1] AS name_any,
-               brands, quantity, serving_size, serving_quantity, unique_scans_n,
-               {nutrient_sql}
+        SELECT code, product_name, brands, quantity, serving_size, serving_quantity, unique_scans_n,
+               {", ".join(f'"{column}"' for column in NUTRIENTS)}
         FROM (
             SELECT *, list_min([CAST(regexp_extract(t, ?, 1) AS INTEGER)
-                                for t in popularity_tags if regexp_matches(t, ?)]) AS de_tier
+                                for t in popularity_tags if regexp_matches(t, ?)]) AS tier
             FROM src
+            WHERE list_contains(countries_tags, ?)
         )
-        ORDER BY {order_sql}, scans_n DESC NULLS LAST, code ASC
+        ORDER BY tier ASC NULLS LAST, unique_scans_n DESC, scans_n DESC NULLS LAST, code ASC
         """,
-        [year_re, year_re],
+        [tier_re, tier_re, tag],
     )
     columns = [d[0] for d in cursor.description]
-    return cursor, columns, year
+    return cursor, columns
+
+
+def pick_name(names: object, languages: tuple[str, ...]) -> str | None:
+    """Name in a language of the country, otherwise the main name, the English one or any."""
+    by_lang: dict[str, str] = {}
+    first = None
+    for item in names or []:
+        text = clean_text(item.get("text"), NAME_MAX)
+        if text is None:
+            continue
+        first = first or text
+        by_lang.setdefault(item.get("lang") or "", text)
+    for lang in (*languages, "main", "en"):
+        if lang in by_lang:
+            return by_lang[lang]
+    return first
 
 
 # ---------------------------------------------------------------- Conversion
@@ -212,18 +253,13 @@ def round_half_up(value: float, digits: int) -> int | float:
     return float(rounded)
 
 
-def convert(record: dict) -> tuple[list | None, str | None]:
-    """One row for the starter file, or (None, reason) if the product is dropped."""
+def convert(record: dict, languages: tuple[str, ...]) -> tuple[list | None, str | None]:
+    """One row for the file of a country, or (None, reason) if the product is dropped."""
     code = normalize_code(record["code"])
     if code is None:
         return None, "invalid code (length or check digit)"
 
-    # German name, otherwise the main name. If both fields are missing, the English or any name.
-    name = next(
-        (text for key in ("name_de", "name_main", "name_en", "name_any")
-         if (text := clean_text(record[key], NAME_MAX))),
-        None,
-    )
+    name = pick_name(record["product_name"], languages)
     if name is None:
         return None, "without name"
 
@@ -285,44 +321,23 @@ def write_json(path: Path, payload: dict) -> bytes:
     return data
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Open Food Facts -> public/data/off-starter.json")
-    parser.add_argument("--parquet", type=Path, default=DEFAULT_PARQUET, help="path to food.parquet")
-    parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help="target file")
-    parser.add_argument("--limit", type=int, default=10_000, help="number of products")
-    parser.add_argument(
-        "--rank", choices=("scans", "de"), default="de",
-        help="scans: by unique_scans_n (worldwide); de: first by the tier of German scans",
-    )
-    parser.add_argument("--date", default=datetime.date.today().isoformat(), help="value for generatedAt")
-    parser.add_argument("--refresh", action="store_true", help="download the dump again")
-    args = parser.parse_args()
-    if hasattr(sys.stderr, "reconfigure"):
-        sys.stderr.reconfigure(errors="replace")
-
-    if args.refresh and args.parquet.exists():
-        args.parquet.unlink()
-    if not args.parquet.exists():
-        download_parquet(args.parquet)
-
-    log(f"Reading {args.parquet}")
-    cursor, columns, year = query_candidates(args.parquet, args.rank)
+def build_country(con, code: str, year: int, limit: int, date: str, out_dir: Path) -> dict:
+    cursor, columns = query_candidates(con, code, year)
+    languages = COUNTRIES[code][2]
 
     rows: list[list] = []
     seen: set[str] = set()
     dropped: Counter = Counter()
     examined = 0
-    last_scans = None
-    while len(rows) < args.limit:
+    while len(rows) < limit:
         batch = cursor.fetchmany(2000)
         if not batch:
             break
         for values in batch:
-            if len(rows) >= args.limit:
+            if len(rows) >= limit:
                 break
             examined += 1
-            record = dict(zip(columns, values))
-            row, reason = convert(record)
+            row, reason = convert(dict(zip(columns, values)), languages)
             if row is not None and row[0] in seen:
                 row, reason = None, "duplicate code"
             if row is None:
@@ -330,30 +345,55 @@ def main() -> None:
                 continue
             seen.add(row[0])
             rows.append(row)
-            last_scans = record["unique_scans_n"]
 
     payload = {
         "source": "off",
         "license": "ODbL",
         "attribution": "Open Food Facts",
-        "generatedAt": args.date,
+        "country": code,
+        "generatedAt": date,
         "fields": FIELDS,
         "rows": rows,
     }
-    data = write_json(args.out, payload)
+    data = write_json(out_dir / f"{code.lower()}.json", payload)
+    return {"code": code, "rows": len(rows), "examined": examined, "dropped": dropped, "bytes": len(data)}
 
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Open Food Facts -> public/data/off/<country>.json")
+    parser.add_argument("countries", nargs="*", help="country codes, for example DE AT CH (default: all)")
+    parser.add_argument("--parquet", type=Path, default=DEFAULT_PARQUET, help="path to food.parquet")
+    parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help="target folder")
+    parser.add_argument("--limit", type=int, default=10_000, help="number of products per country")
+    parser.add_argument(
+        "--year", type=int, default=datetime.date.today().year - 1,
+        help="year of the scan tags (default: last year, the tags of the running year are provisional)",
+    )
+    parser.add_argument("--date", default=datetime.date.today().isoformat(), help="value for generatedAt")
+    parser.add_argument("--refresh", action="store_true", help="download the dump again")
+    args = parser.parse_args()
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(errors="replace")
+
+    codes = [code.upper() for code in args.countries] or list(COUNTRIES)
+    unknown = [code for code in codes if code not in COUNTRIES]
+    if unknown:
+        raise SystemExit(f"Unknown country codes: {', '.join(unknown)}")
+
+    if args.refresh and args.parquet.exists():
+        args.parquet.unlink()
+    if not args.parquet.exists():
+        download_parquet(args.parquet)
+
+    log(f"Reading {args.parquet}")
+    con = load_source(args.parquet, codes)
+    log(f"Ranking: scan tier of the country in {args.year}, within it unique_scans_n descending")
     log("")
-    if args.rank == "scans":
-        log(f"Ranking: unique_scans_n descending, ties broken by German scan tier {year}")
-    else:
-        log(f"Ranking: German scan tier {year}, within it unique_scans_n descending")
-    log(f"Products examined up to the limit: {examined}")
-    for reason, count in dropped.most_common():
-        log(f"  removed ({reason}): {count} ({count / examined:.1%})")
-    log(f"Products in {args.out.name}: {len(rows)} (last one with unique_scans_n = {last_scans})")
-    log(f"{args.out}: {len(data):,} bytes, gzip {len(gzip.compress(data, 9)):,} bytes")
-    if len(rows) < args.limit:
-        log(f"Warning: found only {len(rows)} products instead of {args.limit}.")
+    for code in codes:
+        result = build_country(con, code, args.year, args.limit, args.date, args.out)
+        reasons = ", ".join(f"{reason} {count}" for reason, count in result["dropped"].most_common(3))
+        log(f"{code}: {result['rows']:>6} products, {result['bytes']:>9,} bytes, "
+            f"examined {result['examined']}" + (f" (removed: {reasons})" if reasons else ""))
 
 
 if __name__ == "__main__":

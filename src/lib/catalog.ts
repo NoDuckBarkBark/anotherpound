@@ -1,9 +1,11 @@
 import type { Dish, Food, Nutrients, Unit } from './db';
+import { language, type Language } from './locale';
+import { chosenRegion, region } from './regions';
 
 /**
- * Bundled base catalog: basic foods from the Bundeslebensmittelschlüssel
- * and the most scanned German products from Open Food Facts. Both ship as
- * separate files and are only loaded on the first search.
+ * Base catalog: basic foods from the Bundeslebensmittelschlüssel, named in the language of
+ * the interface, and the most scanned products of the chosen country from Open Food Facts.
+ * Both are separate files and are only loaded on the first search.
  */
 interface DataFile {
   fields: string[];
@@ -38,14 +40,14 @@ function nutrients(row: Row): Nutrients {
   return out;
 }
 
-export function blsFoods(file: DataFile): Food[] {
+export function blsFoods(file: DataFile, lang: Language = language): Food[] {
   return rowsOf(file).map((row) => ({
     id: `bls:${row.id}`,
     updatedAt: 0,
     deleted: 0,
     source: 'bls',
     sourceId: String(row.id),
-    name: String(row.name),
+    name: String((lang === 'en' ? row.nameEn : undefined) ?? row.name),
     unit: 'g',
     per100: nutrients(row),
     portions: [],
@@ -74,53 +76,86 @@ export function offFoods(file: DataFile): Food[] {
   });
 }
 
-/** Normalizes text for search: lowercase, without accents and umlaut dots, ß as ss. */
+/** Normalizes text for search: lowercase, without accents and umlaut dots, ß as ss. Letters of every script stay. */
 export function normalize(value: string): string {
   return value
     .toLowerCase()
     .replace(/ß/g, 'ss')
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
-    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim();
 }
 
 export type Choice = { kind: 'food'; food: Food } | { kind: 'dish'; dish: Dish };
 
-/**
- * State and preparation words. For search, "Reis poliert, roh" is simply "Reis"
- * and "Joghurt mild, mind. 3,5 % Fett" is simply "Joghurt". Spelling as after normalize().
- */
-const STATE_WORDS = new Set(
-  (
-    'roh gekocht gegart gedampft gedunstet gebraten gebacken gegrillt geschmort pochiert frittiert druckgedampft ' +
-    'frisch getrocknet tiefgefroren poliert unpoliert parboiled geschalt ungeschalt natur abgetropft konserve ' +
-    'ohne mit fett schale haut pfanne ofen gesalzen ungesalzen gesusst ungesusst mild gesauert fettarm mind max bis ganz ' +
-    'entrahmt hochstens pasteurisiert ultrahocherhitzt homogenisiert laktosefrei eifrei getrank reif type bio'
-  ).split(' '),
-);
-
-/** Everyday words for which the BLS lists a basic food under a different name. */
-const ALIASES: Record<string, string> = {
-  ei: 'huhnerei',
-  eier: 'huhnerei',
-  nudel: 'teigwaren',
-  nudeln: 'teigwaren',
-  pasta: 'teigwaren',
-  brokkoli: 'broccoli',
-};
-
-const ENDINGS = new Set(['n', 'e', 'en', 'er']);
-
-/** Same word, also in singular and plural: Kartoffel/Kartoffeln, Ei/Eier, Nuss/Nüsse. */
-function same(word: string, token: string): boolean {
-  if (word === token) return true;
-  const [short, long] = word.length < token.length ? [word, token] : [token, word];
-  return long.startsWith(short) && ENDINGS.has(long.slice(short.length));
+/** What the search knows about a language. Spelling as after normalize(). */
+interface Rules {
+  /**
+   * State and preparation words. For search, "Reis poliert, roh" is simply "Reis"
+   * and "Joghurt mild, mind. 3,5 % Fett" is simply "Joghurt".
+   */
+  states: Set<string>;
+  /** Everyday words for which the BLS lists a basic food under a different name. */
+  aliases: Record<string, string>;
+  /** Same word, also in singular and plural. */
+  same: (word: string, token: string) => boolean;
 }
 
-function withoutStates(words: string[]): string[] {
-  const core = words.filter((word) => !STATE_WORDS.has(word) && !/^\d+$/.test(word));
+const wordSet = (list: string) => new Set(list.split(' '));
+
+const GERMAN_ENDINGS = new Set(['n', 'e', 'en', 'er']);
+const ENGLISH_ENDINGS = new Set(['s', 'es']);
+
+/** Shorter and longer of two words that differ only by one of the endings. */
+function differsBy(endings: Set<string>, word: string, token: string): boolean {
+  const [short, long] = word.length < token.length ? [word, token] : [token, word];
+  return long.startsWith(short) && endings.has(long.slice(short.length));
+}
+
+const RULES: Record<Language, Rules> = {
+  de: {
+    states: wordSet(
+      'roh gekocht gegart gedampft gedunstet gebraten gebacken gegrillt geschmort pochiert frittiert druckgedampft ' +
+        'frisch getrocknet tiefgefroren poliert unpoliert parboiled geschalt ungeschalt natur abgetropft konserve ' +
+        'ohne mit fett schale haut pfanne ofen gesalzen ungesalzen gesusst ungesusst mild gesauert fettarm mind max bis ganz ' +
+        'entrahmt hochstens pasteurisiert ultrahocherhitzt homogenisiert laktosefrei eifrei getrank reif type bio',
+    ),
+    aliases: {
+      ei: 'huhnerei',
+      eier: 'huhnerei',
+      nudel: 'teigwaren',
+      nudeln: 'teigwaren',
+      pasta: 'teigwaren',
+      brokkoli: 'broccoli',
+    },
+    // Kartoffel/Kartoffeln, Ei/Eier, Nuss/Nüsse
+    same: (word, token) => word === token || differsBy(GERMAN_ENDINGS, word, token),
+  },
+  en: {
+    states: wordSet(
+      'raw cooked boiled steamed stewed fried baked grilled braised poached roasted deep frozen fresh dried ' +
+        'polished unpolished parboiled peeled unpeeled plain drained canned without with fat skin shell pan oven ' +
+        'salted unsalted sweetened unsweetened mild soured low min max whole skimmed pasteurised uht homogenised ' +
+        'lactose free drink ripe type organic',
+    ),
+    aliases: {
+      noodle: 'pasta',
+      noodles: 'pasta',
+      yoghurt: 'yogurt',
+      oatmeal: 'oat',
+    },
+    // Apple/Apples, Tomato/Tomatoes, Strawberry/Strawberries
+    same: (word, token) => {
+      if (word === token || differsBy(ENGLISH_ENDINGS, word, token)) return true;
+      const [short, long] = word.length < token.length ? [word, token] : [token, word];
+      return short.endsWith('y') && long === short.slice(0, -1) + 'ies';
+    },
+  },
+};
+
+function withoutStates(words: string[], rules: Rules): string[] {
+  const core = words.filter((word) => !rules.states.has(word) && !/^\d+$/.test(word));
   return core.length ? core : words;
 }
 
@@ -141,22 +176,23 @@ interface Indexed {
   order: number;
 }
 
-function indexed(pick: Choice, group: number, order: number): Indexed {
+function indexed(pick: Choice, group: number, order: number, rules: Rules): Indexed {
   const words = normalize(pick.kind === 'dish' ? pick.dish.name : pick.food.name).split(' ').filter(Boolean);
   const brand = normalize(pick.kind === 'food' ? (pick.food.brand ?? '') : '').split(' ').filter(Boolean);
   const key = [...words, ...brand].join(' ');
-  return { pick, key, squashed: key.replaceAll(' ', ''), words, core: withoutStates(words), brand, group, order };
+  return { pick, key, squashed: key.replaceAll(' ', ''), words, core: withoutStates(words, rules), brand, group, order };
 }
 
-export function indexCatalog(bls: Food[], off: Food[]): Indexed[] {
+export function indexCatalog(bls: Food[], off: Food[], lang: Language = language): Indexed[] {
+  const rules = RULES[lang];
   return [
-    ...bls.map((food, order) => indexed({ kind: 'food', food }, 1, order)),
-    ...off.map((food, order) => indexed({ kind: 'food', food }, 2, order)),
+    ...bls.map((food, order) => indexed({ kind: 'food', food }, 1, order, rules)),
+    ...off.map((food, order) => indexed({ kind: 'food', food }, 2, order, rules)),
   ];
 }
 
-function isItself(item: Indexed, wanted: string[]): boolean {
-  if (item.core.length === wanted.length && wanted.every((token) => item.core.some((word) => same(word, token)))) return true;
+function isItself(item: Indexed, wanted: string[], rules: Rules): boolean {
+  if (item.core.length === wanted.length && wanted.every((token) => item.core.some((word) => rules.same(word, token)))) return true;
   return item.core.join('') === wanted.join('');
 }
 
@@ -170,11 +206,11 @@ function isItself(item: Indexed, wanted: string[]): boolean {
  * 4 = a word starts this way,
  * 5 = occurs anywhere.
  */
-function rate(item: Indexed, token: string, wanted: string[]): number {
-  const is = (word: string | undefined) => word !== undefined && same(word, token);
+function rate(item: Indexed, token: string, wanted: string[], rules: Rules): number {
+  const is = (word: string | undefined) => word !== undefined && rules.same(word, token);
   const first = item.words[0] ?? '';
 
-  if (isItself(item, wanted)) return 0;
+  if (isItself(item, wanted, rules)) return 0;
   if (is(first) || is(item.brand[0]) || is(item.words[1])) return 1;
   if (token.length > first.length && token.startsWith(first) && item.squashed.startsWith(token)) return 1;
   if (token.length >= 4 && first.endsWith(token)) return 1;
@@ -185,12 +221,12 @@ function rate(item: Indexed, token: string, wanted: string[]): number {
 }
 
 /** Quality by the first search word; an everyday word counts like the name in the BLS. */
-function matchQuality(item: Indexed, tokens: string[], wanted: string[]): number {
+function matchQuality(item: Indexed, tokens: string[], wanted: string[], rules: Rules): number {
   const token = tokens[0]!;
-  const alias = ALIASES[token];
-  const direct = rate(item, token, wanted);
+  const alias = rules.aliases[token];
+  const direct = rate(item, token, wanted, rules);
   if (alias === undefined) return direct;
-  return Math.min(direct, rate(item, alias, wanted.map((word) => (word === token ? alias : word))));
+  return Math.min(direct, rate(item, alias, wanted.map((word) => (word === token ? alias : word)), rules));
 }
 
 /** Alternates in blocks, so long runs of BLS entries do not push out the products. */
@@ -207,10 +243,17 @@ function interleave<T>(a: T[], b: T[], block = 8): T[] {
  * entries first (most recently used first), then the base catalog by match quality.
  * At equal quality, plain BLS entries come before longer ones, products by scan frequency.
  */
-export function search(query: string, local: Choice[], catalog: Indexed[], limit = 40): Choice[] {
+export function search(
+  query: string,
+  local: Choice[],
+  catalog: Indexed[],
+  limit = 40,
+  lang: Language = language,
+): Choice[] {
+  const rules = RULES[lang];
   const tokens = normalize(query).split(' ').filter(Boolean);
   if (!tokens.length) return [];
-  const wanted = withoutStates(tokens);
+  const wanted = withoutStates(tokens, rules);
 
   const localIds = new Set(local.map((pick) => (pick.kind === 'food' ? pick.food.id : pick.dish.id)));
   const localBarcodes = new Set(
@@ -220,12 +263,13 @@ export function search(query: string, local: Choice[], catalog: Indexed[], limit
   type Candidate = Indexed & { quality: number; used: number };
   // The plural matches too: "erdbeeren" finds "Erdbeere roh".
   const hits = (item: Indexed, token: string) =>
-    item.key.includes(token) || item.squashed.includes(token) || item.words.some((word) => same(word, token));
+    item.key.includes(token) || item.squashed.includes(token) || item.words.some((word) => rules.same(word, token));
   const own: Candidate[] = [];
   const tiers: Candidate[][] = [[], [], [], [], [], []];
   const consider = (item: Indexed, used: number) => {
-    if (!tokens.every((token) => hits(item, token) || (ALIASES[token] !== undefined && hits(item, ALIASES[token])))) return;
-    const candidate = { ...item, used, quality: matchQuality(item, tokens, wanted) };
+    const alias = (token: string) => rules.aliases[token];
+    if (!tokens.every((token) => hits(item, token) || (alias(token) !== undefined && hits(item, alias(token)!)))) return;
+    const candidate = { ...item, used, quality: matchQuality(item, tokens, wanted, rules) };
     // Own entries come first as long as the search word starts or ends a word there.
     if (item.group === 0 && candidate.quality < 5) own.push(candidate);
     else tiers[candidate.quality]!.push(candidate);
@@ -233,7 +277,7 @@ export function search(query: string, local: Choice[], catalog: Indexed[], limit
 
   local.forEach((pick, order) => {
     const used = pick.kind === 'food' ? (pick.food.lastUsedAt ?? 0) : (pick.dish.lastUsedAt ?? 0);
-    consider(indexed(pick, 0, order), used);
+    consider(indexed(pick, 0, order, rules), used);
   });
   for (const item of catalog) {
     const food = item.pick.kind === 'food' ? item.pick.food : undefined;
@@ -268,12 +312,65 @@ async function fetchFile(path: string): Promise<DataFile> {
   return (await response.json()) as DataFile;
 }
 
+const PACK_CACHE = 'anotherpound-pack';
+
+/** File with the most scanned products of the chosen country. */
+export function packPath(code: string = region): string {
+  return `data/off/${code.toLowerCase()}.json`;
+}
+
+async function packCache(): Promise<Cache | undefined> {
+  try {
+    return typeof caches === 'undefined' ? undefined : await caches.open(PACK_CACHE);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The products of the country: from the copy on the device, otherwise from the network.
+ * The copy belongs to one version of the app; a new version fetches the file again and
+ * replaces the copy, also the one of a country chosen before.
+ */
+async function fetchPack(path: string): Promise<Response> {
+  const cache = await packCache();
+  const url = `${path}?v=${__APP_VERSION__}`;
+  const stored = await cache?.match(url);
+  if (stored) return stored;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`${path}: ${response.status}`);
+    if (cache) {
+      const copy = response.clone();
+      void (async () => {
+        for (const request of await cache.keys()) await cache.delete(request);
+        await cache.put(url, copy);
+      })().catch(() => undefined);
+    }
+    return response;
+  } catch (error) {
+    // Without network, the copy of an earlier version is better than nothing.
+    const older = (await cache?.keys())?.find((request) => new URL(request.url).pathname.endsWith(`/${path}`));
+    const fallback = older && (await cache!.match(older));
+    if (fallback) return fallback;
+    throw error;
+  }
+}
+
+/** Makes sure the products of the chosen country are on the device, without reading them yet. */
+export async function keepPack(): Promise<void> {
+  if (chosenRegion() === null) return;
+  await fetchPack(packPath()).catch(() => undefined);
+}
+
 /** Loads the base catalog once. If a file is missing, that part stays empty. */
 export function loadCatalog(): Promise<{ index: Indexed[]; byBarcode: Map<string, Food> }> {
   loading ??= (async () => {
     const [bls, off] = await Promise.all([
-      fetchFile('data/bls.json').then(blsFoods, () => [] as Food[]),
-      fetchFile('data/off-starter.json').then(offFoods, () => [] as Food[]),
+      fetchFile('data/bls.json').then((file) => blsFoods(file), () => [] as Food[]),
+      fetchPack(packPath())
+        .then((response) => response.json() as Promise<DataFile>)
+        .then(offFoods, () => [] as Food[]),
     ]);
     const byBarcode = new Map(off.flatMap((food) => (food.barcode ? [[food.barcode, food] as const] : [])));
     return { index: indexCatalog(bls, off), byBarcode };

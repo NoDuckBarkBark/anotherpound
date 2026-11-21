@@ -64,6 +64,7 @@ export const en = {
     newPortion: 'Add serving',
   },
   pad: { label: 'Number pad', back: 'Backspace' },
+  welcome: { start: 'Start' },
   toast: {
     deleted: (name: string) => `${name} deleted`,
     entries: (count: number) => (count === 1 ? '1 entry' : `${count} entries`),
@@ -152,6 +153,7 @@ export const en = {
     install: 'Install',
     update: 'Update',
     language: 'Language',
+    country: 'Country',
     languageDevice: 'Device',
     storage: { yes: 'Storage persistent', no: 'Storage not persistent' },
     scanner: { native: 'Scanner built in', wasm: 'Scanner zxing' },

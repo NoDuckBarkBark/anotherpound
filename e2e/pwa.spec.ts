@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
 import { build, preview } from 'vite';
 
@@ -15,31 +16,46 @@ test.afterEach(() => {
   expect(pageErrors).toEqual([]);
 });
 
-test('starts without network, finds a food in the built-in catalog and adds it', async ({ page, context }) => {
+/** Country already chosen, so the question at the first start does not come up. */
+async function chooseCountry(page: Page) {
+  await page.addInitScript(() => {
+    if (!localStorage.getItem('anotherpound:region')) localStorage.setItem('anotherpound:region', 'GB');
+  });
+}
+
+test('starts without network, finds a food in the catalog and adds it', async ({ page, context }) => {
   await page.goto('./');
+  // First start: the device is British, so the products of the United Kingdom are fetched and kept.
+  await page.getByRole('dialog', { name: 'AnotherPound' }).getByRole('button', { name: 'Start' }).click();
   await workerReady(page);
+  await expect
+    .poll(() => page.evaluate(async () => (await (await caches.open('anotherpound-pack')).keys()).length))
+    .toBe(1);
 
   await context.setOffline(true);
   await page.reload();
   await expect(page.getByRole('navigation').getByRole('link', { name: 'Today' })).toBeVisible();
 
   await page.getByRole('link', { name: 'Add to Breakfast' }).click();
-  // The built-in catalog is the German Bundeslebensmittelschlüssel: its food names are German.
-  await page.getByRole('searchbox').fill('haferflocken');
-  await page.getByRole('button', { name: /^Hafer Flocken/ }).first().click();
+  // The basic foods come from the Bundeslebensmittelschlüssel, with its English names.
+  await page.getByRole('searchbox').fill('oat flakes');
+  await page.getByRole('button', { name: /^Oat flakes/ }).first().click();
   const sheet = page.getByRole('dialog');
   for (const key of '60') await sheet.getByRole('button', { name: key, exact: true }).click();
   await sheet.getByRole('button', { name: 'Add', exact: true }).click();
   await expect(page.getByRole('heading', { level: 1 })).toContainText('209 kcal');
 
-  // A product from the starter pack can be found by its barcode number without network.
+  // A product of the country can be found by its barcode number without network.
+  const pack = JSON.parse(readFileSync(new URL('../public/data/off/gb.json', import.meta.url), 'utf8')) as { rows: string[][] };
+  const [code, name] = pack.rows[0]!;
   await page.getByRole('button', { name: 'Scan barcode' }).click();
-  await page.getByRole('dialog').getByRole('textbox', { name: 'Barcode number' }).fill('7622202356797');
+  await page.getByRole('dialog').getByRole('textbox', { name: 'Barcode number' }).fill(code!);
   await page.getByRole('dialog').getByRole('button', { name: 'Search' }).click();
-  await expect(page.getByRole('dialog').getByRole('heading', { level: 2 })).toContainText('Frischkäse');
+  await expect(page.getByRole('dialog').getByRole('heading', { level: 2 })).toContainText(name!);
 });
 
 test("is installable: manifest, icons and the browser's own check", async ({ page }) => {
+  await chooseCountry(page);
   await page.goto('./');
   const href = await page.locator('link[rel="manifest"]').getAttribute('href');
   const manifestUrl = new URL(href!, page.url()).href;
@@ -84,6 +100,7 @@ test('takes over a new version by itself at start, after an input only at the pr
     await build({ logLevel: 'silent', build: { outDir, emptyOutDir: true } });
   };
 
+  await chooseCountry(page);
   await publish('9.0.1');
   const server = await preview({ logLevel: 'silent', build: { outDir }, preview: { port: 4175, strictPort: true } });
   try {

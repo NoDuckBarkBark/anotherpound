@@ -1,6 +1,13 @@
 import 'fake-indexeddb/auto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { blsFoods, indexCatalog, normalize, offFoods, search, type Choice } from '../src/lib/catalog';
+import {
+  blsFoods,
+  indexCatalog as indexIn,
+  normalize,
+  offFoods,
+  search as searchIn,
+  type Choice,
+} from '../src/lib/catalog';
 import { AppDB, fresh, type Dish, type Food } from '../src/lib/db';
 import {
   copyMeal,
@@ -16,6 +23,11 @@ import {
   updateEntry,
 } from '../src/lib/diary';
 import { fetchProduct, foodFromOff, searchProducts } from '../src/lib/off';
+
+// The catalog in these tests is German, so the German search rules apply.
+const indexCatalog = (bls: Food[], off: Food[]) => indexIn(bls, off, 'de');
+const search = (query: string, local: Choice[], catalog: ReturnType<typeof indexIn>) =>
+  searchIn(query, local, catalog, 40, 'de');
 
 let counter = 0;
 const openDb = () => new AppDB(`data-${++counter}`);
@@ -384,14 +396,15 @@ describe('Open Food Facts', () => {
     expect((await fetchProduct('4008400402222', broken)).status).toBe('offline');
   });
 
-  it('searches by name in English, in every country, and leaves out incomplete hits', async () => {
+  it('searches by name in English among the products of the chosen country and leaves out incomplete hits', async () => {
     const { seen, fetcher } = searchTarget([product, { code: '4000000000013', product_name: 'No values' }]);
     const result = await searchProducts('hazelnut spread', fetcher);
     expect(result.status === 'ok' && result.foods.map((f) => f.name)).toEqual(['Hazelnut spread']);
     expect(seen.url).toContain('search_terms=hazelnut+spread');
     const params = new URL(seen.url).searchParams;
     expect(params.get('lc')).toBe('en');
-    expect([...params.keys()].filter((key) => key.startsWith('tag'))).toEqual([]);
+    expect(params.get('tagtype_0')).toBe('countries');
+    expect(params.get('tag_0')).toBe('united-kingdom');
   });
 
   it('prefers the German name and searches products sold in Germany on a German device', async () => {
