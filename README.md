@@ -1,10 +1,10 @@
 # AnotherPound
 
-Calorie and macro tracker, limited to what you need every day: log food fast, build your own dishes, set goals, track your weight. No account, no ads, no streaks or points. All data stays on the device.
+Calorie and macro tracker for the browser. Log food by search or barcode, build your own dishes, set goals, track your weight. No account, no ads. All data stays on your device.
 
 **[Open the app](https://noduckbarkbark.github.io/anotherpound/)**
 
-AnotherPound is a PWA and stays one. It runs in the browser, installs to the home screen on Android and iPhone, and works offline. Free, no server, MIT licensed. English and German.
+Installs to the home screen on Android and iPhone and works offline. English and German.
 
 ## Your data
 
