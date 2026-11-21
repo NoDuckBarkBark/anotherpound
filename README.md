@@ -1,14 +1,18 @@
 # AnotherPound
 
-Calorie and macro tracker for the browser. Log food by search or barcode, build your own dishes, set goals, track your weight. No account, no ads. All data stays on your device.
+Calorie and macro tracker. A web app (PWA) that can be installed and works offline.
 
-**[Open the app](https://noduckbarkbark.github.io/anotherpound/)**
+App: https://noduckbarkbark.github.io/anotherpound/
 
-Installs to the home screen on Android and iPhone and works offline. English and German.
+- Food diary with search and barcode scanner
+- Dishes and templates
+- Goals, weight, history
+- Backup file, outgoing webhook
+- English and German
 
-## Your data
+## Data
 
-Everything is stored in the browser's storage on your device. The app asks the browser to keep it, but clearing the browser's site data still deletes it. Export a backup under More → Backup; the file restores everything.
+Data is stored in the browser on the device (IndexedDB). Clearing the browser's site data deletes it. Backup and restore are under More → Backup.
 
 ## Develop
 
