@@ -1,0 +1,17 @@
+node_modules/
+dist/
+test-results/
+playwright-report/
+.vite/
+*.local
+.DS_Store
+Thumbs.db
+
+# Downloaded source data (BLS table, Open Food Facts dump)
+.cache/
+
+# Working notes and local tool settings
+PLAN.md
+reports/
+research_notes/
+.claude/

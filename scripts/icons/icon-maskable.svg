@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Vollflächig für Symbolmasken: das Motiv bleibt im sicheren Kreis (80 % der Breite). -->
+  <rect width="512" height="512" fill="#1d7a5f" />
+  <circle cx="256" cy="256" r="128" fill="none" stroke="#fff" stroke-width="38" />
+  <circle cx="256" cy="256" r="37" fill="#fff" />
+</svg>

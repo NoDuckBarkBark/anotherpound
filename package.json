@@ -1,0 +1,37 @@
+{
+  "name": "anotherpound",
+  "private": true,
+  "version": "0.6.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Calorie and macro tracker. No account, no ads, no server. All data stays on the device.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "vitest run",
+    "e2e": "playwright test"
+  },
+  "dependencies": {
+    "barcode-detector": "^3.2.4",
+    "dexie": "^4.4.7",
+    "zxing-wasm": "^3.1.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@types/node": "^26.6.6",
+    "bwip-js": "^4.11.4",
+    "fake-indexeddb": "^6.2.8",
+    "svelte": "^5.58.1",
+    "svelte-check": "^4.7.8",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.8",
+    "vite-plugin-pwa": "^2.0.0",
+    "vitest": "^5.1.1",
+    "workbox-build": "^7.4.1",
+    "workbox-window": "^7.4.1"
+  },
+  "packageManager": "pnpm@11.14.0"
+}
