@@ -327,26 +327,48 @@ async function packCache(): Promise<Cache | undefined> {
   }
 }
 
+const packUrl = (path: string) => `${path}?v=${__APP_VERSION__}`;
+
+/** Puts the copy in place first and only then removes older ones, so there is never none. */
+async function storePack(cache: Cache, url: string, response: Response): Promise<void> {
+  await cache.put(url, response);
+  const kept = new URL(url, location.href).href;
+  for (const request of await cache.keys()) {
+    if (request.url !== kept) await cache.delete(request);
+  }
+}
+
+let keeping: Promise<void> | null = null;
+
 /**
- * The products of the country: from the copy on the device, otherwise from the network.
+ * Makes sure the products of the chosen country are on the device, without reading them yet.
  * The copy belongs to one version of the app; a new version fetches the file again and
  * replaces the copy, also the one of a country chosen before.
  */
+export function keepPack(): Promise<void> {
+  if (chosenRegion() === null) return Promise.resolve();
+  keeping ??= (async () => {
+    const cache = await packCache();
+    const url = packUrl(packPath());
+    if (!cache || (await cache.match(url))) return;
+    const response = await fetch(url);
+    if (response.ok) await storePack(cache, url, response);
+  })().catch(() => undefined);
+  return keeping;
+}
+
+/** The products of the country: from the copy on the device, otherwise from the network. */
 async function fetchPack(path: string): Promise<Response> {
+  // A download that is already running puts the copy in place.
+  await keeping;
   const cache = await packCache();
-  const url = `${path}?v=${__APP_VERSION__}`;
+  const url = packUrl(path);
   const stored = await cache?.match(url);
   if (stored) return stored;
   try {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`${path}: ${response.status}`);
-    if (cache) {
-      const copy = response.clone();
-      void (async () => {
-        for (const request of await cache.keys()) await cache.delete(request);
-        await cache.put(url, copy);
-      })().catch(() => undefined);
-    }
+    if (cache) void storePack(cache, url, response.clone()).catch(() => undefined);
     return response;
   } catch (error) {
     // Without network, the copy of an earlier version is better than nothing.
@@ -355,12 +377,6 @@ async function fetchPack(path: string): Promise<Response> {
     if (fallback) return fallback;
     throw error;
   }
-}
-
-/** Makes sure the products of the chosen country are on the device, without reading them yet. */
-export async function keepPack(): Promise<void> {
-  if (chosenRegion() === null) return;
-  await fetchPack(packPath()).catch(() => undefined);
 }
 
 /** Loads the base catalog once. If a file is missing, that part stays empty. */
